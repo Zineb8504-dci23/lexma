@@ -93,15 +93,36 @@ def repondre_intention(intention):
 
 # ─── Détection langue ─────────────────────────────────────────
 def detecter_langue(question):
-    q = question.lower()
-    mots_ar = ["ما", "هل", "كيف", "متى", "من", "في", "على", "عقد", "قانون", "عمل", "حق", "فصل"]
-    mots_en = ["what", "how", "when", "who", "where", "why", "is", "are", "can",
-               "the", "contract", "law", "worker", "employer", "right"]
-    score_ar = sum(1 for m in mots_ar if m in q)
-    score_en = sum(1 for m in mots_en if m in q)
-    if score_ar > 0: return "Arabic"
-    if score_en > 0: return "English"
+    q = question.strip()
+    
+    # Détecter arabe par caractères unicode
+    arabic_chars = sum(1 for c in q if '\u0600' <= c <= '\u06FF')
+    if arabic_chars > 2:
+        return "Arabic"
+    
+    # Détecter anglais par mots-clés
+    mots_en = ["what", "how", "when", "who", "where", "why", "is", "are", 
+               "can", "the", "contract", "law", "worker", "employer", "right",
+               "what's", "does", "do", "give", "tell", "explain"]
+    q_lower = q.lower()
+    score_en = sum(1 for m in mots_en if f" {m} " in f" {q_lower} ")
+    if score_en >= 2:
+        return "English"
+    
+    # Par défaut → français
     return "French"
+
+MOTS_HORS_SUJET = [
+    "météo", "meteo", "weather", "temperature", "temps qu'il fait",
+    "foot", "football", "coupe du monde", "world cup", "sport",
+    "blague", "joke", "recette", "cuisine", "film", "musique",
+    "capital", "capitale", "president", "roi", "géographie",
+    "math", "calcul", "addition", "multiply", "multiply"
+]
+
+def est_hors_sujet_explicite(question):
+    q = question.lower()
+    return any(mot in q for mot in MOTS_HORS_SUJET)
 
 # ─── Pipeline RAG ─────────────────────────────────────────────
 def rag(question, top_k=5):
@@ -190,22 +211,26 @@ if question := st.chat_input("Posez votre question juridique... (FR | AR | EN)")
             st.session_state.messages.append({"role": "assistant", "content": reponse})
 
         else:
-            with st.spinner("🔍 Recherche dans la législation marocaine..."):
-                reponse, sources = rag(question)
-
-            # Hors-sujet détecté par score
-            if reponse is None:
+            # Vérification hors-sujet explicite (météo, sport, math...)
+            if est_hors_sujet_explicite(question):
                 msg_hs = message_hors_sujet(question)
                 st.markdown(f'<div class="hors-sujet">{msg_hs}</div>', unsafe_allow_html=True)
                 st.session_state.messages.append({"role": "assistant", "content": msg_hs})
-
             else:
-                st.markdown(reponse)
-                if sources:
-                    with st.expander("📚 Sources consultées"):
-                        for s in sources:
-                            st.markdown(
-                                f'<div class="source-box">{s["label"]} &nbsp;·&nbsp; score: {s["score"]:.2f}</div>',
-                                unsafe_allow_html=True
-                            )
-                st.session_state.messages.append({"role": "assistant", "content": reponse})
+                with st.spinner("🔍 Recherche dans la législation marocaine..."):
+                    reponse, sources = rag(question)
+                # Hors-sujet détecté par score Qdrant
+                if reponse is None:
+                    msg_hs = message_hors_sujet(question)
+                    st.markdown(f'<div class="hors-sujet">{msg_hs}</div>', unsafe_allow_html=True)
+                    st.session_state.messages.append({"role": "assistant", "content": msg_hs})
+                else:
+                    st.markdown(reponse)
+                    if sources:
+                        with st.expander("📚 Sources consultées"):
+                            for s in sources:
+                                st.markdown(
+                                    f'<div class="source-box">{s["label"]} &nbsp;·&nbsp; score: {s["score"]:.2f}</div>',
+                                    unsafe_allow_html=True
+                                )
+                    st.session_state.messages.append({"role": "assistant", "content": reponse})
