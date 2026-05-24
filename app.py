@@ -3,14 +3,12 @@ from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from groq import Groq
 
-# ─── Configuration page ───────────────────────────────────────
 st.set_page_config(
     page_title="LexMA — Assistant Juridique Marocain",
     page_icon="⚖️",
     layout="centered"
 )
 
-# ─── CSS personnalisé ─────────────────────────────────────────
 st.markdown("""
 <style>
     .source-box {
@@ -24,12 +22,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ─── Header ───────────────────────────────────────────────────
 st.title("⚖️ LexMA")
 st.caption("Assistant juridique basé sur la législation marocaine — FR | AR | EN")
 st.divider()
 
-# ─── Chargement des modèles ───────────────────────────────────
 @st.cache_resource
 def load_models():
     embedder = SentenceTransformer("BAAI/bge-m3")
@@ -41,10 +37,38 @@ def load_models():
     return embedder, qdrant, groq
 
 embedder, qdrant_client, groq_client = load_models()
-
 COLLECTION_NAME = "lexma_juridique"
 
-# ─── Fonction RAG ─────────────────────────────────────────────
+def detecter_intention(question):
+    q = question.lower().strip()
+    
+    salutations = ["bonjour", "salam", "hello", "hi", "bonsoir", "salut", "hey",
+                   "مرحبا", "السلام عليكم", "صباح الخير", "good morning", "good evening"]
+    
+    remerciements = ["merci", "thank you", "thanks", "شكرا", "شكراً", "merci beaucoup",
+                     "thank u", "thx", "je te remercie", "c'est parfait", "super", "excellent"]
+    
+    aurevoir = ["au revoir", "bye", "goodbye", "à bientôt", "bonne journée",
+                "bonne soirée", "مع السلامة", "وداعا"]
+    
+    if any(mot in q for mot in salutations):
+        return "salutation"
+    if any(mot in q for mot in remerciements):
+        return "remerciement"
+    if any(mot in q for mot in aurevoir):
+        return "aurevoir"
+    return "question"
+
+def repondre_intention(intention):
+    if intention == "salutation":
+        return "👋 Bonjour ! Je suis **LexMA**, votre assistant juridique marocain.\n\nPosez-moi vos questions sur le **Code du Travail**, le **Code de Commerce**, le **Code des Obligations et Contrats** ou la **Constitution**.\n\nJe réponds en **français**, **arabe** et **anglais** ! ⚖️"
+    
+    if intention == "remerciement":
+        return "😊 Avec plaisir ! N'hésitez pas si vous avez d'autres questions juridiques. Je suis là pour vous aider ! ⚖️"
+    
+    if intention == "aurevoir":
+        return "👋 Au revoir ! N'hésitez pas à revenir si vous avez des questions juridiques. Bonne journée ! ⚖️"
+
 def rag(question, top_k=5):
     query_vector = embedder.encode(question).tolist()
     results = qdrant_client.query_points(
@@ -60,23 +84,26 @@ def rag(question, top_k=5):
         contexte += r.payload['text'] + "\n"
         sources.append(f"📄 {r.payload['source']} — Page {r.payload['page']} (score: {r.score:.2f})")
 
-    prompt = f"""Tu es LexMA, un assistant juridique spécialisé dans la législation marocaine.
+    prompt = f"""You are LexMA, a legal assistant specialized in Moroccan law.
 
-RÈGLE ABSOLUE : Réponds OBLIGATOIREMENT dans la même langue que la question.
-- Question en français → réponse en français
-- Question en arabe → réponse en arabe
-- Question en anglais → réponse en anglais
+CRITICAL RULE: Detect the language of the QUESTION and respond in EXACTLY that language.
+- Question in French → respond in French
+- Question in Arabic → respond in Arabic
+- Question in English → respond in English
 
-Réponds en te basant UNIQUEMENT sur les extraits juridiques fournis.
-Si la réponse n'est pas dans les extraits, dis-le clairement.
-Cite toujours la source (nom du code + numéro d'article).
+RULES:
+- Answer based ONLY on the provided legal excerpts
+- Never repeat the excerpts or the prompt in your answer
+- Give only your final answer, no preamble
+- If the answer is not in the excerpts, say so clearly in the same language
+- Always cite relevant articles
 
-EXTRAITS :
+EXCERPTS:
 {contexte}
 
-QUESTION : {question}
+QUESTION: {question}
 
-RÉPONSE (obligatoirement dans la langue de la question) :"""
+DIRECT ANSWER:"""
 
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -84,10 +111,8 @@ RÉPONSE (obligatoirement dans la langue de la question) :"""
         temperature=0.1,
         max_tokens=1024
     )
-
     return response.choices[0].message.content, sources
 
-# ─── Historique ───────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -95,20 +120,23 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# ─── Input ────────────────────────────────────────────────────
 if question := st.chat_input("Posez votre question juridique... (FR | AR | EN)"):
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
         st.markdown(question)
 
     with st.chat_message("assistant"):
-        with st.spinner("Recherche dans la législation marocaine..."):
-            reponse, sources = rag(question)
-
-        st.markdown(reponse)
-
-        with st.expander("📚 Sources consultées"):
-            for s in sources:
-                st.markdown(f'<div class="source-box">{s}</div>', unsafe_allow_html=True)
-
-    st.session_state.messages.append({"role": "assistant", "content": reponse})
+        intention = detecter_intention(question)
+        
+        if intention != "question":
+            reponse = repondre_intention(intention)
+            st.markdown(reponse)
+            st.session_state.messages.append({"role": "assistant", "content": reponse})
+        else:
+            with st.spinner("Recherche dans la législation marocaine..."):
+                reponse, sources = rag(question)
+            st.markdown(reponse)
+            with st.expander("📚 Sources consultées"):
+                for s in sources:
+                    st.markdown(f'<div class="source-box">{s}</div>', unsafe_allow_html=True)
+            st.session_state.messages.append({"role": "assistant", "content": reponse})
