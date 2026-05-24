@@ -59,24 +59,23 @@ def rag(question, top_k=5):
         contexte += f"\n--- Extrait {i+1} ({r.payload['source']}, page {r.payload['page']}) ---\n"
         contexte += r.payload['text'] + "\n"
         sources.append(f"📄 {r.payload['source']} — Page {r.payload['page']} (score: {r.score:.2f})")
-
-    prompt = f"""Tu es LexMA, un assistant juridique spécialisé dans la législation marocaine.
+        
+prompt = f"""Tu es LexMA, un assistant juridique spécialisé dans la législation marocaine.
 
 RÈGLE ABSOLUE : Réponds OBLIGATOIREMENT dans la même langue que la question.
-- Question en français → réponse en français
-- Question en arabe → réponse en arabe
-- Question en anglais → réponse en anglais
+RÈGLE ABSOLUE : Ne répète JAMAIS les extraits ou le prompt dans ta réponse.
+RÈGLE ABSOLUE : Donne uniquement ta réponse finale, sans préambule.
 
 Réponds en te basant UNIQUEMENT sur les extraits juridiques fournis.
 Si la réponse n'est pas dans les extraits, dis-le clairement.
-Cite toujours la source (nom du code + numéro d'article).
+Cite les articles pertinents.
 
 EXTRAITS :
 {contexte}
 
 QUESTION : {question}
 
-RÉPONSE (obligatoirement dans la langue de la question) :"""
+RÉPONSE DIRECTE :"""
 
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -84,7 +83,6 @@ RÉPONSE (obligatoirement dans la langue de la question) :"""
         temperature=0.1,
         max_tokens=1024
     )
-
     return response.choices[0].message.content, sources
 
 # ─── Historique ───────────────────────────────────────────────
@@ -102,16 +100,18 @@ if question := st.chat_input("Posez votre question juridique... (FR | AR | EN)")
         st.markdown(question)
 
     with st.chat_message("assistant"):
-        with st.spinner("Recherche dans la législation marocaine..."):
-            reponse, sources = rag(question)
-
-        st.markdown(reponse)
-
-        with st.expander("📚 Sources consultées"):
-            for s in sources:
-                st.markdown(f'<div class="source-box">{s}</div>', unsafe_allow_html=True)
-
-    st.session_state.messages.append({"role": "assistant", "content": reponse})
+        if is_salutation(question):
+            reponse = "👋 Bonjour ! Je suis **LexMA**, votre assistant juridique marocain.\n\nPosez-moi vos questions sur le **Code du Travail**, le **Code de Commerce** ou le **Code des Obligations et Contrats**. Je réponds en français, arabe et anglais ! ⚖️"
+            st.markdown(reponse)
+            st.session_state.messages.append({"role": "assistant", "content": reponse})
+        else:
+            with st.spinner("Recherche dans la législation marocaine..."):
+                reponse, sources = rag(question)
+            st.markdown(reponse)
+            with st.expander("📚 Sources consultées"):
+                for s in sources:
+                    st.markdown(f'<div class="source-box">{s}</div>', unsafe_allow_html=True)
+            st.session_state.messages.append({"role": "assistant", "content": reponse})
     def is_salutation(question):
     mots = ["bonjour", "salam", "hello", "hi", "bonsoir", "salut", "مرحبا", "السلام","hola"]
     return any(mot in question.lower() for mot in mots)
