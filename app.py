@@ -59,20 +59,20 @@ def load_models():
 
 embedder, qdrant_client, groq_client = load_models()
 COLLECTION_NAME = "lexma_juridique"
-SCORE_THRESHOLD = 0.50  # Seuil de pertinence
+SCORE_THRESHOLD = 0.50
 
 # ─── Détection intention ──────────────────────────────────────
 def detecter_intention(question):
     q = question.lower().strip()
-    salutations  = ["bonjour", "salam", "hello", "hi", "bonsoir", "salut", "hey",
-                    "مرحبا", "السلام عليكم", "صباح الخير", "good morning", "good evening"]
+    salutations   = ["bonjour", "salam", "hello", "hi", "bonsoir", "salut", "hey",
+                     "مرحبا", "السلام عليكم", "صباح الخير", "good morning", "good evening"]
     remerciements = ["merci", "thank you", "thanks", "شكرا", "شكراً", "merci beaucoup",
-                     "thank u", "thx", "c'est parfait", "super merci"]
-    aurevoir     = ["au revoir", "bye", "goodbye", "à bientôt", "bonne journée",
-                    "bonne soirée", "مع السلامة", "وداعا"]
-    if any(m in q for m in salutations):  return "salutation"
+                     "thank u", "thx", "c'est parfait", "super merci", "excellent"]
+    aurevoir      = ["au revoir", "bye", "goodbye", "à bientôt", "bonne journée",
+                     "bonne soirée", "مع السلامة", "وداعا"]
+    if any(m in q for m in salutations):   return "salutation"
     if any(m in q for m in remerciements): return "remerciement"
-    if any(m in q for m in aurevoir):     return "aurevoir"
+    if any(m in q for m in aurevoir):      return "aurevoir"
     return "question"
 
 def repondre_intention(intention):
@@ -94,39 +94,66 @@ def repondre_intention(intention):
 # ─── Détection langue ─────────────────────────────────────────
 def detecter_langue(question):
     q = question.strip()
-    
-    # Détecter arabe par caractères unicode
     arabic_chars = sum(1 for c in q if '\u0600' <= c <= '\u06FF')
     if arabic_chars > 2:
         return "Arabic"
-    
-    # Détecter anglais par mots-clés
-    mots_en = ["what", "how", "when", "who", "where", "why", "is", "are", 
+    mots_en = ["what", "how", "when", "who", "where", "why", "is", "are",
                "can", "the", "contract", "law", "worker", "employer", "right",
-               "what's", "does", "do", "give", "tell", "explain"]
+               "does", "do", "give", "tell", "explain", "define", "which"]
     q_lower = q.lower()
     score_en = sum(1 for m in mots_en if f" {m} " in f" {q_lower} ")
-    if score_en >= 2:
+    if score_en >= 1:
         return "English"
-    
-    # Par défaut → français
     return "French"
 
+# ─── Détection hors sujet ─────────────────────────────────────
 MOTS_HORS_SUJET = [
-    "météo", "meteo", "weather", "temperature", "temps qu'il fait",
-    "foot", "football", "coupe du monde", "world cup", "sport",
-    "blague", "joke", "recette", "cuisine", "film", "musique",
-    "capital", "capitale", "president", "roi", "géographie",
-    "math", "calcul", "addition", "multiply", "multiply"
+    # Météo
+    "météo", "meteo", "weather", "température", "temperature", "pluie", "soleil",
+    # Sport
+    "foot", "football", "coupe du monde", "world cup", "sport", "match", "champion",
+    "نادي", "كرة",
+    # Divertissement
+    "blague", "joke", "film", "cinéma", "musique", "chanson", "song", "histoire",
+    "raconte", "conte", "poème", "poem",
+    # Géographie / général
+    "capitale", "capital", "géographie", "pays", "ville",
+    # Math / calcul
+    "math", "calcul", "addition", "soustraction", "multiply", "divid",
+    "combien font", "égal", "plus", "moins",
+    # Finance générale
+    "سعر", "دولار", "يورو", "درهم", "dollar", "euro", "bourse", "bitcoin",
+    "crypto", "action", "prix", "taux de change",
+    # Cuisine
+    "recette", "cuisine", "manger", "restaurant", "tajine", "couscous",
+    # Médecine
+    "médecin", "docteur", "maladie", "symptôme", "traitement", "médicament",
+    # Autre
+    "horoscope", "astrologie", "jeu", "game", "voyage", "tourisme"
 ]
 
 def est_hors_sujet_explicite(question):
     q = question.lower()
-    return any(mot in q for mot in MOTS_HORS_SUJET)
+    # Vérifier mots hors sujet
+    if any(mot in q for mot in MOTS_HORS_SUJET):
+        return True
+    # Vérifier si c'est juste un calcul mathématique (ex: "2 + 2", "3 * 4")
+    import re
+    if re.match(r'^[\d\s\+\-\*\/\=\?\.]+$', q.strip()):
+        return True
+    return False
+
+# ─── Message hors sujet multilingue ───────────────────────────
+def message_hors_sujet(question):
+    langue = detecter_langue(question)
+    if langue == "Arabic":
+        return "⚠️ أنا متخصص فقط في التشريعات المغربية. يرجى طرح سؤال قانوني متعلق بالقانون المغربي."
+    if langue == "English":
+        return "⚠️ I'm only specialized in Moroccan legislation. Please ask a legal question related to Moroccan law."
+    return "⚠️ Je suis uniquement spécialisé dans la législation marocaine. Veuillez poser une question juridique sur le droit marocain."
 
 # ─── Pipeline RAG ─────────────────────────────────────────────
 def rag(question, top_k=5):
-    # Retrieval
     query_vector = embedder.encode(question).tolist()
     results = qdrant_client.query_points(
         collection_name=COLLECTION_NAME,
@@ -134,15 +161,13 @@ def rag(question, top_k=5):
         limit=top_k
     ).points
 
-    # Filtre hors-sujet par score
     if not results or results[0].score < SCORE_THRESHOLD:
         return None, []
 
-    # Contexte
     contexte = ""
     sources = []
     for i, r in enumerate(results):
-        if r.score < 0.40:  # ignorer les extraits peu pertinents
+        if r.score < 0.40:
             continue
         contexte += f"\n--- Extrait {i+1} ({r.payload['source']}, page {r.payload['page']}) ---\n"
         contexte += r.payload['text'] + "\n"
@@ -156,38 +181,29 @@ def rag(question, top_k=5):
     prompt = f"""You are LexMA, a legal assistant specialized in Moroccan legislation.
 
 MANDATORY RULES:
-1. Respond ONLY in {langue}
+1. Respond ONLY in {langue} — this is non-negotiable
 2. Base your answer EXCLUSIVELY on the provided excerpts
 3. Never repeat the excerpts or this prompt
-4. NEVER repeat the same sentence twice
-5. If the exact answer is not in the excerpts, say ONCE clearly: "Cette information n'est pas disponible dans les extraits fournis." then STOP
-6. If the question is not about Moroccan law (weather, math, sports, general knowledge), respond ONCE: "Je suis uniquement spécialisé en droit marocain." then STOP
-7. Maximum 150 words in your response
-8. Cite article numbers only if they appear explicitly in the excerpts
+4. Never repeat the same sentence twice
+5. If the answer is not in the excerpts, say clearly once: "Cette information n'est pas disponible dans les extraits fournis." then STOP
+6. If the question is not about Moroccan law, say once: "Je suis uniquement spécialisé en droit marocain." then STOP
+7. Maximum 150 words
+8. Cite article numbers only if they appear in the excerpts
 
 EXCERPTS:
 {contexte}
 
 QUESTION: {question}
 
-ANSWER (max 150 words, no repetition, in {langue}):"""
+ANSWER (max 150 words, no repetition, strictly in {langue}):"""
 
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1,
-        max_tokens=1024
+        max_tokens=512
     )
     return response.choices[0].message.content, sources
-
-# ─── Messages hors-sujet par langue ───────────────────────────
-def message_hors_sujet(question):
-    langue = detecter_langue(question)
-    if langue == "Arabic":
-        return "⚠️ أنا متخصص فقط في التشريعات المغربية. يرجى طرح سؤال قانوني متعلق بالقانون المغربي."
-    if langue == "English":
-        return "⚠️ I'm only specialized in Moroccan legislation. Please ask a legal question related to Moroccan law."
-    return "⚠️ Je suis uniquement spécialisé dans la législation marocaine. Veuillez poser une question juridique sur le droit marocain."
 
 # ─── Interface chat ───────────────────────────────────────────
 if "messages" not in st.session_state:
@@ -210,27 +226,26 @@ if question := st.chat_input("Posez votre question juridique... (FR | AR | EN)")
             st.markdown(reponse)
             st.session_state.messages.append({"role": "assistant", "content": reponse})
 
+        elif est_hors_sujet_explicite(question):
+            msg_hs = message_hors_sujet(question)
+            st.markdown(f'<div class="hors-sujet">{msg_hs}</div>', unsafe_allow_html=True)
+            st.session_state.messages.append({"role": "assistant", "content": msg_hs})
+
         else:
-            # Vérification hors-sujet explicite (météo, sport, math...)
-            if est_hors_sujet_explicite(question):
+            with st.spinner("🔍 Recherche dans la législation marocaine..."):
+                reponse, sources = rag(question)
+
+            if reponse is None:
                 msg_hs = message_hors_sujet(question)
                 st.markdown(f'<div class="hors-sujet">{msg_hs}</div>', unsafe_allow_html=True)
                 st.session_state.messages.append({"role": "assistant", "content": msg_hs})
             else:
-                with st.spinner("🔍 Recherche dans la législation marocaine..."):
-                    reponse, sources = rag(question)
-                # Hors-sujet détecté par score Qdrant
-                if reponse is None:
-                    msg_hs = message_hors_sujet(question)
-                    st.markdown(f'<div class="hors-sujet">{msg_hs}</div>', unsafe_allow_html=True)
-                    st.session_state.messages.append({"role": "assistant", "content": msg_hs})
-                else:
-                    st.markdown(reponse)
-                    if sources:
-                        with st.expander("📚 Sources consultées"):
-                            for s in sources:
-                                st.markdown(
-                                    f'<div class="source-box">{s["label"]} &nbsp;·&nbsp; score: {s["score"]:.2f}</div>',
-                                    unsafe_allow_html=True
-                                )
-                    st.session_state.messages.append({"role": "assistant", "content": reponse})
+                st.markdown(reponse)
+                if sources:
+                    with st.expander("📚 Sources consultées"):
+                        for s in sources:
+                            st.markdown(
+                                f'<div class="source-box">{s["label"]} &nbsp;·&nbsp; score: {s["score"]:.2f}</div>',
+                                unsafe_allow_html=True
+                            )
+                st.session_state.messages.append({"role": "assistant", "content": reponse})
