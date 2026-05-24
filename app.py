@@ -69,6 +69,20 @@ def repondre_intention(intention):
     if intention == "aurevoir":
         return "👋 Au revoir ! N'hésitez pas à revenir si vous avez des questions juridiques. Bonne journée ! ⚖️"
 
+def detecter_langue(question):
+    q = question.lower()
+    mots_ar = ["ما", "هل", "كيف", "متى", "من", "في", "على", "عقد", "قانون", "عمل"]
+    mots_en = ["what", "how", "when", "who", "where", "why", "is", "are", "can", "the", "contract", "law"]
+    
+    score_ar = sum(1 for mot in mots_ar if mot in q)
+    score_en = sum(1 for mot in mots_en if mot in q)
+    
+    if score_ar > 0:
+        return "Arabic"
+    if score_en > 0:
+        return "English"
+    return "French"
+
 def rag(question, top_k=5):
     query_vector = embedder.encode(question).tolist()
     results = qdrant_client.query_points(
@@ -84,18 +98,17 @@ def rag(question, top_k=5):
         contexte += r.payload['text'] + "\n"
         sources.append(f"📄 {r.payload['source']} — Page {r.payload['page']} (score: {r.score:.2f})")
 
+    langue = detecter_langue(question)
+
     prompt = f"""You are LexMA, a legal assistant specialized in Moroccan law.
 
-CRITICAL RULE: Detect the language of the QUESTION and respond in EXACTLY that language.
-- Question in French → respond in French
-- Question in Arabic → respond in Arabic
-- Question in English → respond in English
+YOU MUST RESPOND IN {langue} ONLY. THIS IS MANDATORY.
 
-RULES:
+Rules:
 - Answer based ONLY on the provided legal excerpts
-- Never repeat the excerpts or the prompt in your answer
-- Give only your final answer, no preamble
-- If the answer is not in the excerpts, say so clearly in the same language
+- Never repeat the excerpts or the prompt
+- Give only your final answer
+- If the answer is not in the excerpts, say so in {langue}
 - Always cite relevant articles
 
 EXCERPTS:
@@ -103,7 +116,7 @@ EXCERPTS:
 
 QUESTION: {question}
 
-DIRECT ANSWER:"""
+ANSWER IN {langue}:"""
 
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
