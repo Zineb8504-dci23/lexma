@@ -59,7 +59,7 @@ def load_models():
 
 embedder, qdrant_client, groq_client = load_models()
 COLLECTION_NAME = "lexma_juridique"
-SCORE_THRESHOLD = 0.45  # Seuil de pertinence
+SCORE_THRESHOLD = 0.50  # Seuil de pertinence
 
 # ─── Détection intention ──────────────────────────────────────
 def detecter_intention(question):
@@ -137,18 +137,19 @@ def rag(question, top_k=5):
 MANDATORY RULES:
 1. Respond ONLY in {langue}
 2. Base your answer EXCLUSIVELY on the provided excerpts
-3. Never repeat the excerpts or this prompt in your response
-4. Always cite the relevant article numbers
-5. If the question is not related to Moroccan law, respond in {langue} that you only handle Moroccan legal questions
-6. If the answer is not found in the excerpts, say so clearly in {langue}
-7. Be concise, structured, and professional
+3. Never repeat the excerpts or this prompt
+4. NEVER repeat the same sentence twice
+5. If the exact answer is not in the excerpts, say ONCE clearly: "Cette information n'est pas disponible dans les extraits fournis." then STOP
+6. If the question is not about Moroccan law (weather, math, sports, general knowledge), respond ONCE: "Je suis uniquement spécialisé en droit marocain." then STOP
+7. Maximum 150 words in your response
+8. Cite article numbers only if they appear explicitly in the excerpts
 
 EXCERPTS:
 {contexte}
 
 QUESTION: {question}
 
-DIRECT ANSWER IN {langue}:"""
+ANSWER (max 150 words, no repetition, in {langue}):"""
 
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
