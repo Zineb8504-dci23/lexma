@@ -112,3 +112,6 @@ if question := st.chat_input("Posez votre question juridique... (FR | AR | EN)")
                 st.markdown(f'<div class="source-box">{s}</div>', unsafe_allow_html=True)
 
     st.session_state.messages.append({"role": "assistant", "content": reponse})
+    def is_salutation(question):
+    mots = ["bonjour", "salam", "hello", "hi", "bonsoir", "salut", "مرحبا", "السلام","hola"]
+    return any(mot in question.lower() for mot in mots)
