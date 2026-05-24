@@ -3,14 +3,12 @@ from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from groq import Groq
 
-# ─── Configuration page ───────────────────────────────────────
 st.set_page_config(
     page_title="LexMA — Assistant Juridique Marocain",
     page_icon="⚖️",
     layout="centered"
 )
 
-# ─── CSS personnalisé ─────────────────────────────────────────
 st.markdown("""
 <style>
     .source-box {
@@ -24,12 +22,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ─── Header ───────────────────────────────────────────────────
 st.title("⚖️ LexMA")
 st.caption("Assistant juridique basé sur la législation marocaine — FR | AR | EN")
 st.divider()
 
-# ─── Chargement des modèles ───────────────────────────────────
 @st.cache_resource
 def load_models():
     embedder = SentenceTransformer("BAAI/bge-m3")
@@ -44,7 +40,10 @@ embedder, qdrant_client, groq_client = load_models()
 
 COLLECTION_NAME = "lexma_juridique"
 
-# ─── Fonction RAG ─────────────────────────────────────────────
+def is_salutation(question):
+    mots = ["bonjour", "salam", "hello", "hi", "bonsoir", "salut", "مرحبا", "السلام"]
+    return any(mot in question.lower() for mot in mots)
+
 def rag(question, top_k=5):
     query_vector = embedder.encode(question).tolist()
     results = qdrant_client.query_points(
@@ -59,8 +58,8 @@ def rag(question, top_k=5):
         contexte += f"\n--- Extrait {i+1} ({r.payload['source']}, page {r.payload['page']}) ---\n"
         contexte += r.payload['text'] + "\n"
         sources.append(f"📄 {r.payload['source']} — Page {r.payload['page']} (score: {r.score:.2f})")
-        
-prompt = f"""Tu es LexMA, un assistant juridique spécialisé dans la législation marocaine.
+
+    prompt = f"""Tu es LexMA, un assistant juridique spécialisé dans la législation marocaine.
 
 RÈGLE ABSOLUE : Réponds OBLIGATOIREMENT dans la même langue que la question.
 RÈGLE ABSOLUE : Ne répète JAMAIS les extraits ou le prompt dans ta réponse.
@@ -85,7 +84,6 @@ RÉPONSE DIRECTE :"""
     )
     return response.choices[0].message.content, sources
 
-# ─── Historique ───────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -93,7 +91,6 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# ─── Input ────────────────────────────────────────────────────
 if question := st.chat_input("Posez votre question juridique... (FR | AR | EN)"):
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
@@ -112,6 +109,3 @@ if question := st.chat_input("Posez votre question juridique... (FR | AR | EN)")
                 for s in sources:
                     st.markdown(f'<div class="source-box">{s}</div>', unsafe_allow_html=True)
             st.session_state.messages.append({"role": "assistant", "content": reponse})
-    def is_salutation(question):
-    mots = ["bonjour", "salam", "hello", "hi", "bonsoir", "salut", "مرحبا", "السلام","hola"]
-    return any(mot in question.lower() for mot in mots)
